@@ -1,8 +1,13 @@
 #pragma once
 
 #include <Arduino.h>
-#include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+
+// Only include AsyncWebServer for ESP32/ESP8266 (not RP2040/RP2350)
+#if defined(ESP32) || defined(ESP8266)
+    #include <ESPAsyncWebServer.h>
+#endif
+
 #include "ESPUIclientFsm.h"
 #include "ESPUIcontrol.h"
 
@@ -23,7 +28,12 @@ protected:
 
     ClientUpdateType_t ClientUpdateType = ClientUpdateType_t::RebuildNeeded;
 
+#if defined(ESP32) || defined(ESP8266)
     AsyncWebSocketClient * client = nullptr;
+#else
+    // RP2040/RP2350: No async WebSocket client
+    void * client = nullptr;
+#endif
 
     friend class fsm_EspuiClient_state_Idle;
     friend class fsm_EspuiClient_state_SendingUpdate;
@@ -54,13 +64,25 @@ private:
     uint32_t    NextSyncID = 0;
 
 public:
+#if defined(ESP32) || defined(ESP8266)
                 ESPUIclient(AsyncWebSocketClient * _client);
+#else
+                ESPUIclient(void * _client = nullptr);
+#endif
                 ESPUIclient(const ESPUIclient & source);
     virtual     ~ESPUIclient();
     void        NotifyClient(ClientUpdateType_t value);
+#if defined(ESP32) || defined(ESP8266)
     bool        onWsEvent(AwsEventType type, void* arg, uint8_t* data, size_t len);
+#else
+    bool        onWsEvent(int type, void* arg, uint8_t* data, size_t len);
+#endif
     bool        IsSyncronized();
+#if defined(ESP32) || defined(ESP8266)
     uint32_t    id() { return client->id(); }
+#else
+    uint32_t    id() { return 0; }
+#endif
     void        SetState(ClientUpdateType_t value);
     bool        SendJsonDocToWebSocket(ArduinoJson::JsonDocument& document);
 

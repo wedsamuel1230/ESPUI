@@ -2,7 +2,10 @@
 
 #include <functional>
 
-#include <ESPAsyncWebServer.h>
+// Only include AsyncWebServer for ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
+    #include <ESPAsyncWebServer.h>
+#endif
 
 #include "dataControlsJS.h"
 #include "dataGraphJS.h"
@@ -52,7 +55,7 @@ static String heapInfo(const __FlashStringHelper* mode)
     result.reserve(128);
 
 #ifdef UMM_HEAP_IRAM
-    // here esp8266 is configurerd to use an extra 16KB (i)ram
+    // here esp8266 is configured to use an extra 16KB (i)ram
     {
         HeapSelectIram useInstructionRamHere;
         ESP.getHeapStats(&hfree, &hmax, &hfrag);
@@ -77,12 +80,17 @@ static String heapInfo(const __FlashStringHelper* mode)
     result += hfrag;
     result += "%\n";
 
-#else // !ESP8266
+#elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350)
+    // RP2040/RP2350: Use rp2040.getFreeHeap()
+    result += rp2040.getFreeHeap();
+    result += ' ';
 
+#else
+    // ESP32
     result += ESP.getFreeHeap();
     result += ' ';
 
-#endif // !ESP8266
+#endif
 
     result += mode;
 
@@ -449,6 +457,8 @@ void ESPUIClass::prepareFileSystem(bool format)
 }
 
 // Handle Websockets Communication
+// WebSocket event handler - only for ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
 void ESPUIClass::onWsEvent(
     AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len)
 {
@@ -493,6 +503,7 @@ void ESPUIClass::onWsEvent(
 
     return;
 }
+#endif
 
 uint16_t ESPUIClass::addControl(ControlType type, const char* label)
 {
@@ -1045,12 +1056,23 @@ void ESPUIClass::jsonReload()
     }
 }
 
+// beginSPIFFS - only available on ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
 void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const char* password, uint16_t port)
 {
     // Backwards compatibility wrapper
     beginLITTLEFS(_title, username, password, port);
 }
+#else
+void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const char* password, uint16_t port)
+{
+    // Not supported on RP2040/RP2350
+    Serial.println("ERROR: beginSPIFFS not supported on RP2040/RP2350. Use begin() for memory mode.");
+}
+#endif
 
+// beginLITTLEFS - only available on ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
 void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const char* password, uint16_t port)
 {
     ui_title = _title;
@@ -1151,7 +1173,10 @@ void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const c
     }
 #endif
 }
+#endif  // ESP32 || ESP8266
 
+// Memory mode begin() - only available on ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
 void ESPUIClass::begin(const char* _title, const char* username, const char* password, uint16_t port)
 {
     basicAuthUsername = username;
@@ -1333,6 +1358,58 @@ void ESPUIClass::begin(const char* _title, const char* username, const char* pas
     }
 #endif
 }
+#endif  // ESP32 || ESP8266
+
+// Memory mode begin() - RP2040/RP2350 version using synchronous WebServer
+#if !ESPUI_USING_ASYNC
+void ESPUIClass::begin(const char* _title, const char* username, const char* password, uint16_t port)
+{
+    ui_title = _title;
+    basicAuthUsername = username;
+    basicAuthPassword = password;
+
+    if (username != nullptr && password != nullptr)
+    {
+        basicAuth = true;
+    }
+    else
+    {
+        basicAuth = false;
+    }
+
+    // Create synchronous WebServer
+    syncServer = new WebServer(port);
+
+    // Set up routes
+    syncServer->on("/", HTTP_GET, [this]() {
+        // Simple HTML response - basic UI
+        String html = "<html><head><title>";
+        html += ui_title;
+        html += "</title></head><body>";
+        html += "<h1>";
+        html += ui_title;
+        html += "</h1>";
+        html += "<p>ESPUI on RP2040/RP2350</p>";
+        html += "<p>Note: Full UI requires LittleFS filesystem with web files.</p>";
+        html += "</body></html>";
+        syncServer->send(200, "text/html", html);
+    });
+
+    syncServer->on("/heap", HTTP_GET, [this]() {
+        syncServer->send(200, "text/plain", heapInfo(F("RP2040 mode")));
+    });
+
+    // Start server
+    syncServer->begin();
+
+#if defined(DEBUG_ESPUI)
+    if (verbosity)
+    {
+        Serial.println(F("UI Initialized (RP2040/RP2350 sync mode)"));
+    }
+#endif
+}
+#endif  // !ESPUI_USING_ASYNC
 
 void ESPUIClass::setVerbosity(Verbosity v)
 {

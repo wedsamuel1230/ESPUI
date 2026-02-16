@@ -20,33 +20,64 @@
 #endif
 
 #include <stdlib_noniso.h>
-#ifdef ESP32
-	#if (ESP_IDF_VERSION_MAJOR == 4 && ESP_IDF_VERSION_MINOR >= 4) || ESP_IDF_VERSION_MAJOR > 4
-		#include <LittleFS.h>
-	#else
-		#include <LITTLEFS.h>
-	#endif
+
+// Platform detection for ESP32, ESP8266, RP2040, RP2350
+#if defined(ESP32)
+    #define ESPUI_PLATFORM "ESP32"
+    #define ESPUI_USING_ASYNC 1
+    #define ESPUI_USING_FREERTOS 1
+    #if (ESP_IDF_VERSION_MAJOR == 4 && ESP_IDF_VERSION_MINOR >= 4) || ESP_IDF_VERSION_MAJOR > 4
+        #include <LittleFS.h>
+    #else
+        #include <LITTLEFS.h>
+    #endif
+#elif defined(ESP8266)
+    #define ESPUI_PLATFORM "ESP8266"
+    #define ESPUI_USING_ASYNC 1
+    #define ESPUI_USING_FREERTOS 0
+    #include <LittleFS.h>
+#elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(RP2040)
+    #define ESPUI_PLATFORM "RP2040"
+    #define ESPUI_USING_ASYNC 0
+    #define ESPUI_USING_FREERTOS 1
+    #define __FREERTOS 1
+    #include <LittleFS.h>
+#elif defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350) || defined(RP2350)
+    #define ESPUI_PLATFORM "RP2350"
+    #define ESPUI_USING_ASYNC 0
+    #define ESPUI_USING_FREERTOS 1
+    #define __FREERTOS 1
+    #include <LittleFS.h>
 #else
-	#include <LittleFS.h>
+    #error "Unsupported platform. ESPUI supports ESP32, ESP8266, RP2040, and RP2350."
 #endif
+
 #include <map>
-#include <ESPAsyncWebServer.h>
 
 #include "ESPUIcontrol.h"
 #include "ESPUIclient.h"
 
+// Platform-specific includes
 #if defined(ESP32)
-#include <AsyncTCP.h>
-#include "WiFi.h"
-
-#else
-
-#include <ArduinoOTA.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
-#include <ESPAsyncTCP.h>
-#include <Hash.h>
-
+    #include <AsyncTCP.h>
+    #include "WiFi.h"
+    #include <ESPAsyncWebServer.h>
+    #include <freertos/FreeRTOS.h>
+    #include <freertos/semphr.h>
+#elif defined(ESP8266)
+    #include <ESPAsyncWebServer.h>
+    #include <ArduinoOTA.h>
+    #include <ESP8266WiFi.h>
+    #include <ESP8266mDNS.h>
+    #include <ESPAsyncTCP.h>
+    #include <Hash.h>
+#elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2040) || defined(ARDUINO_RP2350)
+    // RP2040/RP2350: Use synchronous WebServer from arduino-pico core
+    #include <WiFi.h>
+    #include <WebServer.h>
+    #include <FreeRTOS.h>
+    #include <semphr.h>
+    // Note: No AsyncTCP - using synchronous polling instead
 #endif
 
 #define FILE_WRITING "w"
@@ -102,21 +133,35 @@ class ESPUIClass
 public:
     ESPUIClass()
     {
-#ifdef ESP32
+#if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350)
         ControlsSemaphore = xSemaphoreCreateMutex();
         xSemaphoreGive(ControlsSemaphore);
-#endif // def ESP32
-	}
+#endif
+    }
+
+    // Platform-specific JSON buffer sizes
+    // RP2040 has limited RAM (264KB), so use smaller buffers
+#if defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350)
+    unsigned int jsonUpdateDocumentSize = 4000;   // Reduced for RP2040/RP2350
+    unsigned int jsonInitialDocumentSize = 4000;  // Reduced for RP2040/RP2350
+    unsigned int jsonChunkNumberMax = 0;
+#elif defined(ESP8266)
     unsigned int jsonUpdateDocumentSize = 2000;
-#ifdef ESP8266
     unsigned int jsonInitialDocumentSize = 2000;
     unsigned int jsonChunkNumberMax = 5;
 #else
+    unsigned int jsonUpdateDocumentSize = 2000;
     unsigned int jsonInitialDocumentSize = 8000;
     unsigned int jsonChunkNumberMax = 0;
 #endif
     bool sliderContinuous = false;
+
+#if defined(ESP32) || defined(ESP8266)
     void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len);
+#else
+    // RP2040/RP2350: No WebSocket events
+    void onWsEvent(void* server, void* client, int type, void* arg, uint8_t* data, size_t len) {}
+#endif
 	bool captivePortal = true;
 
     void setVerbosity(Verbosity verbosity);
@@ -216,7 +261,11 @@ public:
     const char* ui_title = "ESPUI"; // Store UI Title and Header Name
     Control* controls = nullptr;
     void jsonReload();
+#if defined(ESP32) || defined(ESP8266)
     void jsonDom(uint16_t startidx, AsyncWebSocketClient* client = nullptr, bool Updating = false);
+#else
+    void jsonDom(uint16_t startidx, void* client = nullptr, bool Updating = false);
+#endif
 
     Verbosity verbosity = Verbosity::Quiet;
     uint32_t  GetNextControlChangeId();
@@ -258,17 +307,25 @@ public:
         return accelerometer(label, [callback, userData](Control* sender, int type){ callback(sender, type, userData); }, color);
     }
 
+    // Async WebServer accessors - only available on ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
     AsyncWebServer* WebServer() {return server;}
     AsyncWebSocket* WebSocket() {return ws;}
+#else
+    void* WebServer() {return nullptr;}
+    void* WebSocket() {return nullptr;}
+#endif
     size_t clientCount() const {return MapOfClients.size();}
 
+    // LittleFS abstraction for all platforms
 #if defined(ESP32)
-#   if (ESP_IDF_VERSION_MAJOR == 4 && ESP_IDF_VERSION_MINOR >= 4) || ESP_IDF_VERSION_MAJOR > 4
+    #if (ESP_IDF_VERSION_MAJOR == 4 && ESP_IDF_VERSION_MINOR >= 4) || ESP_IDF_VERSION_MAJOR > 4
         fs::LittleFSFS & EspuiLittleFS = LittleFS;
     #else
         fs::LITTLEFSFS & EspuiLittleFS = LITTLEFS;
-#   endif
+    #endif
 #else
+    // ESP8266, RP2040, RP2350 all use standard LittleFS
     fs::FS & EspuiLittleFS = LittleFS;
 #endif
 
@@ -276,14 +333,23 @@ protected:
     friend class ESPUIclient;
     friend class ESPUIcontrol;
 
-#ifdef ESP32
+    // Semaphore for thread safety - ESP32 and RP2040/RP2350 use FreeRTOS
+#if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350)
     SemaphoreHandle_t ControlsSemaphore = NULL;
-#endif // def ESP32
+#endif
 
     void        RemoveToBeDeletedControls();
 
+#if defined(ESP32) || defined(ESP8266)
     AsyncWebServer* server;
     AsyncWebSocket* ws;
+#else
+    // RP2040/RP2350: No async server/websocket
+    void* server;
+    void* ws;
+    // Synchronous WebServer for RP2040/RP2350
+    WebServer* syncServer;
+#endif
 
     const char* basicAuthUsername = nullptr;
     const char* basicAuthPassword = nullptr;
