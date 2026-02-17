@@ -343,11 +343,9 @@ uint32_t ESPUIclient::prepareJSONChunk(uint16_t startindex,
                                       bool InUpdateMode,
                                       String FragmentRequestString)
 {
-#ifdef ESP32
+#if ESPUI_USING_FREERTOS
     xSemaphoreTake(ESPUI.ControlsSemaphore, portMAX_DELAY);
-#endif // def ESP32
-
-    // Serial.println(String("prepareJSONChunk: Start.          InUpdateMode: ") + String(InUpdateMode));
+#endif
     // Serial.println(String("prepareJSONChunk: Start.            startindex: ") + String(startindex));
     // Serial.println(String("prepareJSONChunk: Start. FragmentRequestString: '") + FragmentRequestString + "'");
     int elementcount = 0;
@@ -532,9 +530,9 @@ uint32_t ESPUIclient::prepareJSONChunk(uint16_t startindex,
 
     } while (false);
 
-#ifdef ESP32
+#if ESPUI_USING_FREERTOS
     xSemaphoreGive(ESPUI.ControlsSemaphore);
-#endif // def ESP32
+#endif
 
     // Serial.println(String("prepareJSONChunk: END: elementcount: ") + String(elementcount));
     return elementcount;

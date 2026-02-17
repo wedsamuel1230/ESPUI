@@ -1090,11 +1090,9 @@ void ESPUIClass::jsonReload()
     }
 }
 
-// beginSPIFFS - only available on ESP32/ESP8266
-#if defined(ESP32) || defined(ESP8266)
+// beginSPIFFS - backwards compatibility wrapper
 void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const char* password, uint16_t port)
 {
-    // Backwards compatibility wrapper
     beginLITTLEFS(_title, username, password, port);
 }
 #else
@@ -1105,8 +1103,7 @@ void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const cha
 }
 #endif
 
-// beginLITTLEFS - only available on ESP32/ESP8266
-#if defined(ESP32) || defined(ESP8266)
+// beginLITTLEFS - filesystem mode
 void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const char* password, uint16_t port)
 {
     ui_title = _title;
@@ -1380,8 +1377,7 @@ void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const c
 }
 #endif  // ESP32 || ESP8266
 
-// Memory mode begin() - only available on ESP32/ESP8266
-#if defined(ESP32) || defined(ESP8266)
+// Memory mode begin()
 void ESPUIClass::begin(const char* _title, const char* username, const char* password, uint16_t port)
 {
     basicAuthUsername = username;

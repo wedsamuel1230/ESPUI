@@ -3,10 +3,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-// Only include AsyncWebServer for ESP32/ESP8266 (not RP2040/RP2350)
-#if defined(ESP32) || defined(ESP8266)
-    #include <ESPAsyncWebServer.h>
-#endif
+#include <ESPAsyncWebServer.h>
 
 #include "ESPUIclientFsm.h"
 #include "ESPUIcontrol.h"
