@@ -2,7 +2,10 @@
 
 #include <functional>
 
-#include <ESPAsyncWebServer.h>
+// Only include AsyncWebServer for ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
+    #include <ESPAsyncWebServer.h>
+#endif
 
 #include "dataControlsJS.h"
 #include "dataGraphJS.h"
@@ -421,6 +424,9 @@ void ESPUIClass::prepareFileSystem(bool format)
 #else
     writeFile("/index.htm", HTML_INDEX);
 
+    EspuiLittleFS.mkdir("/css");
+    EspuiLittleFS.mkdir("/js");
+
     writeFile("/css/style.css", CSS_STYLE);
     writeFile("/css/normalize.css", CSS_NORMALIZE);
 
@@ -454,6 +460,8 @@ void ESPUIClass::prepareFileSystem(bool format)
 }
 
 // Handle Websockets Communication
+// WebSocket event handler - only for ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
 void ESPUIClass::onWsEvent(
     AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len)
 {
@@ -498,6 +506,34 @@ void ESPUIClass::onWsEvent(
 
     return;
 }
+#endif
+
+#if !ESPUI_USING_ASYNC
+void ESPUIClass::onWsEvent(uint8_t clientId, int type, uint8_t* data, size_t len)
+{
+    RemoveToBeDeletedControls();
+
+    if (WStype_DISCONNECTED == type)
+    {
+        if (MapOfClients.end() != MapOfClients.find(clientId))
+        {
+            delete MapOfClients[clientId];
+            MapOfClients.erase(clientId);
+        }
+        return;
+    }
+
+    if (MapOfClients.end() == MapOfClients.find(clientId))
+    {
+        MapOfClients[clientId] = new ESPUIclient(reinterpret_cast<void*>(static_cast<uintptr_t>(clientId)));
+    }
+
+    if (MapOfClients[clientId]->onWsEvent(type, nullptr, data, len))
+    {
+        NotifyClients(ESPUIclient::UpdateNeeded);
+    }
+}
+#endif
 
 uint16_t ESPUIClass::addControl(ControlType type, const char* label)
 {
@@ -1027,7 +1063,11 @@ bool ESPUIClass::SendJsonDocToWebSocket(ArduinoJson::JsonDocument& document, uin
     return Response;
 }
 
+#if ESPUI_USING_ASYNC
 void ESPUIClass::jsonDom(uint16_t, AsyncWebSocketClient*, bool)
+#else
+void ESPUIClass::jsonDom(uint16_t, void*, bool)
+#endif
 {
     NotifyClients(ClientUpdateType_t::RebuildNeeded);
 }
@@ -1055,6 +1095,13 @@ void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const cha
 {
     beginLITTLEFS(_title, username, password, port);
 }
+#else
+void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const char* password, uint16_t port)
+{
+    // Not supported on RP2040/RP2350
+    Serial.println("ERROR: beginSPIFFS not supported on RP2040/RP2350. Use begin() for memory mode.");
+}
+#endif
 
 // beginLITTLEFS - filesystem mode
 void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const char* password, uint16_t port)
@@ -1157,6 +1204,178 @@ void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const c
     }
 #endif
 }
+#else
+void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const char* password, uint16_t port)
+{
+    ui_title = _title;
+    basicAuthUsername = username;
+    basicAuthPassword = password;
+
+    if (username == nullptr && password == nullptr)
+    {
+        basicAuth = false;
+    }
+    else
+    {
+        basicAuth = true;
+    }
+
+    syncServer = new ::WebServer(port);
+    ws = new WebSocketsServer(port + 1);
+    Serial.println(String("[RP2040] WebSocketsServer created on port ") + (port + 1));
+
+    ws->onEvent([](uint8_t clientId, WStype_t type, uint8_t* payload, size_t length) {
+        ESPUI.onWsEvent(clientId, static_cast<int>(type), payload, length);
+    });
+    ws->begin();
+
+    const char* uiAssetVersion = "3";
+    bool fsBegin = EspuiLittleFS.begin();
+    bool indexExists = fsBegin && EspuiLittleFS.exists("/index.htm");
+    bool versionMatches = false;
+
+    if (fsBegin && EspuiLittleFS.exists("/.espui_ui_version"))
+    {
+        File versionFile = EspuiLittleFS.open("/.espui_ui_version", "r");
+        if (versionFile)
+        {
+            String currentVersion = versionFile.readString();
+            currentVersion.trim();
+            versionMatches = currentVersion.equals(uiAssetVersion);
+            versionFile.close();
+        }
+    }
+
+    if (!fsBegin || !indexExists || !versionMatches)
+    {
+        prepareFileSystem(false);
+        fsBegin = EspuiLittleFS.begin();
+        indexExists = fsBegin && EspuiLittleFS.exists("/index.htm");
+
+        if (fsBegin)
+        {
+            writeFile("/.espui_ui_version", uiAssetVersion);
+        }
+    }
+
+    auto guardAuth = [this]() -> bool {
+        if (basicAuth && !syncServer->authenticate(basicAuthUsername, basicAuthPassword))
+        {
+            syncServer->requestAuthentication();
+            return false;
+        }
+        return true;
+    };
+
+    auto serveFile = [this, guardAuth](const char* path, const char* contentType) {
+        if (!guardAuth())
+        {
+            return;
+        }
+
+        File file = EspuiLittleFS.open(path, "r");
+        if (!file)
+        {
+            syncServer->send(404, "text/plain", "Not found");
+            return;
+        }
+
+        syncServer->streamFile(file, contentType);
+        file.close();
+    };
+
+    if (indexExists)
+    {
+        syncServer->on("/", HTTP_GET, [serveFile]() { serveFile("/index.htm", "text/html"); });
+        syncServer->on("/css/style.css", HTTP_GET, [serveFile]() { serveFile("/css/style.css", "text/css"); });
+        syncServer->on("/css/normalize.css", HTTP_GET, [serveFile]() { serveFile("/css/normalize.css", "text/css"); });
+        syncServer->on("/js/zepto.min.js", HTTP_GET, [serveFile]() { serveFile("/js/zepto.min.js", "application/javascript"); });
+        syncServer->on("/js/controls.js", HTTP_GET, [serveFile]() { serveFile("/js/controls.js", "application/javascript"); });
+        syncServer->on("/js/slider.js", HTTP_GET, [serveFile]() { serveFile("/js/slider.js", "application/javascript"); });
+        syncServer->on("/js/graph.js", HTTP_GET, [serveFile]() { serveFile("/js/graph.js", "application/javascript"); });
+        syncServer->on("/js/tabbedcontent.js", HTTP_GET, [serveFile]() { serveFile("/js/tabbedcontent.js", "application/javascript"); });
+    }
+    else
+    {
+        syncServer->on("/", HTTP_GET, [this, guardAuth]() {
+            if (!guardAuth())
+            {
+                return;
+            }
+
+            String html = "<html><head><title>";
+            html += ui_title;
+            html += "</title></head><body>";
+            html += "<h1>";
+            html += ui_title;
+            html += "</h1>";
+            html += "<p>ESPUI on RP2040/RP2350</p>";
+            html += "<p>Note: Full UI requires LittleFS filesystem with web files.</p>";
+            html += "</body></html>";
+            syncServer->send(200, "text/html", html);
+        });
+    }
+
+    syncServer->on("/js/custom.js", HTTP_GET, [this, guardAuth]() {
+        if (!guardAuth())
+        {
+            return;
+        }
+
+        syncServer->send(200, "application/javascript", customJS ? customJS : "");
+    });
+
+    syncServer->on("/css/custom.css", HTTP_GET, [this, guardAuth]() {
+        if (!guardAuth())
+        {
+            return;
+        }
+
+        syncServer->send(200, "text/css", customCSS ? customCSS : "");
+    });
+
+    syncServer->on("/heap", HTTP_GET, [this, guardAuth, indexExists]() {
+        if (!guardAuth())
+        {
+            return;
+        }
+
+        syncServer->send(200, "text/plain", heapInfo(indexExists ? F("In LITTLEFS mode (RP2040/RP2350)") : F("RP2040/RP2350 fallback mode")));
+    });
+
+    syncServer->onNotFound([this]() {
+        if (captivePortal)
+        {
+            syncServer->sendHeader("Location", "/", true);
+            syncServer->send(302, "text/plain", "");
+        }
+        else
+        {
+            syncServer->send(404, "text/plain", "Not found");
+        }
+    });
+
+    syncServer->begin();
+
+#if defined(DEBUG_ESPUI)
+    if (verbosity)
+    {
+        if (indexExists)
+        {
+            Serial.println(F("UI Initialized (RP2040/RP2350 LittleFS mode, WebSocket on port+1)"));
+        }
+        else if (!fsBegin)
+        {
+            Serial.println(F("LittleFS mount failed, running fallback page mode."));
+        }
+        else
+        {
+            Serial.println(F("LittleFS mounted but /index.htm missing, running fallback page mode."));
+        }
+    }
+#endif
+}
+#endif  // ESP32 || ESP8266
 
 // Memory mode begin()
 void ESPUIClass::begin(const char* _title, const char* username, const char* password, uint16_t port)
@@ -1340,10 +1559,38 @@ void ESPUIClass::begin(const char* _title, const char* username, const char* pas
     }
 #endif
 }
+#endif  // ESP32 || ESP8266
+
+// Memory mode begin() - RP2040/RP2350 version using synchronous WebServer
+#if !ESPUI_USING_ASYNC
+void ESPUIClass::begin(const char* _title, const char* username, const char* password, uint16_t port)
+{
+    beginLITTLEFS(_title, username, password, port);
+}
+#endif  // !ESPUI_USING_ASYNC
 
 void ESPUIClass::setVerbosity(Verbosity v)
 {
     verbosity = v;
+}
+
+void ESPUIClass::handleClient()
+{
+#if !ESPUI_USING_ASYNC
+    static int callCount = 0;
+    callCount++;
+    if (callCount % 1000 == 0) {
+        Serial.println(String("[RP2040] handleClient called count=") + callCount);
+    }
+    if (syncServer != nullptr)
+    {
+        syncServer->handleClient();
+    }
+    if (ws != nullptr)
+    {
+        ws->loop();
+    }
+#endif
 }
 
 ESPUIClass ESPUI;

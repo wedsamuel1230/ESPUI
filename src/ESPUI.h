@@ -153,11 +153,16 @@ public:
     bool sliderContinuous = false;
 
     void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len);
+#else
+    // RP2040/RP2350: WebSocket events handled by WebSocketsServer
+    void onWsEvent(uint8_t clientId, int type, uint8_t* data, size_t len);
+#endif
 	bool captivePortal = true;
 
     void setVerbosity(Verbosity verbosity);
     void begin(const char* _title, const char* username = nullptr, const char* password = nullptr,
         uint16_t port = 80); // Setup server and page in Memorymode
+    void handleClient(); // Poll synchronous server on non-async platforms
     void beginSPIFFS(const char* _title, const char* username = nullptr, const char* password = nullptr,
         uint16_t port = 80); // Setup server and page in LITTLEFS mode (DEPRECATED, use beginLITTLEFS)
     void beginLITTLEFS(const char* _title, const char* username = nullptr, const char* password = nullptr,
@@ -252,7 +257,11 @@ public:
     const char* ui_title = "ESPUI"; // Store UI Title and Header Name
     Control* controls = nullptr;
     void jsonReload();
+#if defined(ESP32) || defined(ESP8266)
     void jsonDom(uint16_t startidx, AsyncWebSocketClient* client = nullptr, bool Updating = false);
+#else
+    void jsonDom(uint16_t startidx, void* client = nullptr, bool Updating = false);
+#endif
 
     Verbosity verbosity = Verbosity::Quiet;
     uint32_t  GetNextControlChangeId();
@@ -294,8 +303,14 @@ public:
         return accelerometer(label, [callback, userData](Control* sender, int type){ callback(sender, type, userData); }, color);
     }
 
+    // Async WebServer accessors - only available on ESP32/ESP8266
+#if defined(ESP32) || defined(ESP8266)
     AsyncWebServer* WebServer() {return server;}
     AsyncWebSocket* WebSocket() {return ws;}
+#else
+    void* WebServer() {return nullptr;}
+    void* WebSocket() {return nullptr;}
+#endif
     size_t clientCount() const {return MapOfClients.size();}
 
     // LittleFS abstraction for all platforms
@@ -321,8 +336,16 @@ protected:
 
     void        RemoveToBeDeletedControls();
 
+#if defined(ESP32) || defined(ESP8266)
     AsyncWebServer* server;
     AsyncWebSocket* ws;
+#else
+    // RP2040/RP2350: No async server/websocket
+    void* server;
+    WebSocketsServer* ws;
+    // Synchronous WebServer for RP2040/RP2350
+    ::WebServer* syncServer;
+#endif
 
     const char* basicAuthUsername = nullptr;
     const char* basicAuthPassword = nullptr;
