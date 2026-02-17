@@ -36,17 +36,15 @@
     #define ESPUI_USING_ASYNC 1
     #define ESPUI_USING_FREERTOS 0
     #include <LittleFS.h>
-#elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(RP2040)
+#elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(RP2040) || defined(TARGET_RP2040) || defined(PICO_RP2040)
     #define ESPUI_PLATFORM "RP2040"
-    #define ESPUI_USING_ASYNC 0
-    #define ESPUI_USING_FREERTOS 1
-    #define __FREERTOS 1
+    #define ESPUI_USING_ASYNC 1
+    #define ESPUI_USING_FREERTOS 0
     #include <LittleFS.h>
-#elif defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350) || defined(RP2350)
+#elif defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350) || defined(RP2350) || defined(TARGET_RP2350) || defined(PICO_RP2350)
     #define ESPUI_PLATFORM "RP2350"
-    #define ESPUI_USING_ASYNC 0
-    #define ESPUI_USING_FREERTOS 1
-    #define __FREERTOS 1
+    #define ESPUI_USING_ASYNC 1
+    #define ESPUI_USING_FREERTOS 0
     #include <LittleFS.h>
 #else
     #error "Unsupported platform. ESPUI supports ESP32, ESP8266, RP2040, and RP2350."
@@ -71,13 +69,11 @@
     #include <ESP8266mDNS.h>
     #include <ESPAsyncTCP.h>
     #include <Hash.h>
-#elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2040) || defined(ARDUINO_RP2350)
-    // RP2040/RP2350: Use synchronous WebServer from arduino-pico core
+#elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2040) || defined(ARDUINO_RP2350) || defined(TARGET_RP2040) || defined(PICO_RP2040) || defined(TARGET_RP2350) || defined(PICO_RP2350)
+    // RP2040/RP2350: Use RPAsyncTCP for async WebServer (matches ESP-DASH pattern)
     #include <WiFi.h>
-    #include <WebServer.h>
-    #include <FreeRTOS.h>
-    #include <semphr.h>
-    // Note: No AsyncTCP - using synchronous polling instead
+    #include <RPAsyncTCP.h>
+    #include <ESPAsyncWebServer.h>
 #endif
 
 #define FILE_WRITING "w"
@@ -133,7 +129,7 @@ class ESPUIClass
 public:
     ESPUIClass()
     {
-#if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350)
+#if ESPUI_USING_FREERTOS
         ControlsSemaphore = xSemaphoreCreateMutex();
         xSemaphoreGive(ControlsSemaphore);
 #endif
@@ -156,12 +152,7 @@ public:
 #endif
     bool sliderContinuous = false;
 
-#if defined(ESP32) || defined(ESP8266)
     void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len);
-#else
-    // RP2040/RP2350: No WebSocket events
-    void onWsEvent(void* server, void* client, int type, void* arg, uint8_t* data, size_t len) {}
-#endif
 	bool captivePortal = true;
 
     void setVerbosity(Verbosity verbosity);
@@ -261,11 +252,7 @@ public:
     const char* ui_title = "ESPUI"; // Store UI Title and Header Name
     Control* controls = nullptr;
     void jsonReload();
-#if defined(ESP32) || defined(ESP8266)
     void jsonDom(uint16_t startidx, AsyncWebSocketClient* client = nullptr, bool Updating = false);
-#else
-    void jsonDom(uint16_t startidx, void* client = nullptr, bool Updating = false);
-#endif
 
     Verbosity verbosity = Verbosity::Quiet;
     uint32_t  GetNextControlChangeId();
@@ -307,14 +294,8 @@ public:
         return accelerometer(label, [callback, userData](Control* sender, int type){ callback(sender, type, userData); }, color);
     }
 
-    // Async WebServer accessors - only available on ESP32/ESP8266
-#if defined(ESP32) || defined(ESP8266)
     AsyncWebServer* WebServer() {return server;}
     AsyncWebSocket* WebSocket() {return ws;}
-#else
-    void* WebServer() {return nullptr;}
-    void* WebSocket() {return nullptr;}
-#endif
     size_t clientCount() const {return MapOfClients.size();}
 
     // LittleFS abstraction for all platforms
@@ -333,23 +314,15 @@ protected:
     friend class ESPUIclient;
     friend class ESPUIcontrol;
 
-    // Semaphore for thread safety - ESP32 and RP2040/RP2350 use FreeRTOS
-#if defined(ESP32) || defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350)
+    // Semaphore for thread safety on FreeRTOS platforms
+#if ESPUI_USING_FREERTOS
     SemaphoreHandle_t ControlsSemaphore = NULL;
 #endif
 
     void        RemoveToBeDeletedControls();
 
-#if defined(ESP32) || defined(ESP8266)
     AsyncWebServer* server;
     AsyncWebSocket* ws;
-#else
-    // RP2040/RP2350: No async server/websocket
-    void* server;
-    void* ws;
-    // Synchronous WebServer for RP2040/RP2350
-    WebServer* syncServer;
-#endif
 
     const char* basicAuthUsername = nullptr;
     const char* basicAuthPassword = nullptr;
