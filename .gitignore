@@ -33,11 +33,6 @@ Temporary Items
 # Backup files produced by some editors
 *~
 *.bak
-memory-bank/
-plan/
-.github/skills
-.github/hooks
-.github/scripts
 
 .vscode/
 
