@@ -40,3 +40,7 @@ plan/
 .github/scripts
 
 .vscode/
+
+# PlatformIO build artifacts
+.pio/
+pio_build_*.log
