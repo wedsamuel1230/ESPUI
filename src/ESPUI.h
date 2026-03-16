@@ -38,12 +38,12 @@
     #include <LittleFS.h>
 #elif defined(ARDUINO_ARCH_RP2040) || defined(ARDUINO_RP2040) || defined(RP2040) || defined(TARGET_RP2040) || defined(PICO_RP2040)
     #define ESPUI_PLATFORM "RP2040"
-    #define ESPUI_USING_ASYNC 1
+    #define ESPUI_USING_ASYNC 0
     #define ESPUI_USING_FREERTOS 0
     #include <LittleFS.h>
 #elif defined(ARDUINO_ARCH_RP2350) || defined(ARDUINO_RP2350) || defined(RP2350) || defined(TARGET_RP2350) || defined(PICO_RP2350)
     #define ESPUI_PLATFORM "RP2350"
-    #define ESPUI_USING_ASYNC 1
+    #define ESPUI_USING_ASYNC 0
     #define ESPUI_USING_FREERTOS 0
     #include <LittleFS.h>
 #else
@@ -74,6 +74,8 @@
     #include <WiFi.h>
     #include <RPAsyncTCP.h>
     #include <ESPAsyncWebServer.h>
+    #include <WebServer.h>
+    #include <WebSocketsServer.h>
 #endif
 
 #define FILE_WRITING "w"
@@ -152,6 +154,7 @@ public:
 #endif
     bool sliderContinuous = false;
 
+#if ESPUI_USING_ASYNC
     void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType type, void* arg, uint8_t* data, size_t len);
 #else
     // RP2040/RP2350: WebSocket events handled by WebSocketsServer

@@ -1091,6 +1091,7 @@ void ESPUIClass::jsonReload()
 }
 
 // beginSPIFFS - backwards compatibility wrapper
+#if ESPUI_USING_ASYNC
 void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const char* password, uint16_t port)
 {
     beginLITTLEFS(_title, username, password, port);
@@ -1104,6 +1105,7 @@ void ESPUIClass::beginSPIFFS(const char* _title, const char* username, const cha
 #endif
 
 // beginLITTLEFS - filesystem mode
+#if ESPUI_USING_ASYNC
 void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const char* password, uint16_t port)
 {
     ui_title = _title;
@@ -1375,9 +1377,10 @@ void ESPUIClass::beginLITTLEFS(const char* _title, const char* username, const c
     }
 #endif
 }
-#endif  // ESP32 || ESP8266
+#endif
 
 // Memory mode begin()
+#if ESPUI_USING_ASYNC
 void ESPUIClass::begin(const char* _title, const char* username, const char* password, uint16_t port)
 {
     basicAuthUsername = username;
@@ -1559,7 +1562,7 @@ void ESPUIClass::begin(const char* _title, const char* username, const char* pas
     }
 #endif
 }
-#endif  // ESP32 || ESP8266
+#endif  // ESPUI_USING_ASYNC
 
 // Memory mode begin() - RP2040/RP2350 version using synchronous WebServer
 #if !ESPUI_USING_ASYNC
